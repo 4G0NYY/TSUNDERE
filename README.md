@@ -72,12 +72,17 @@ tsundere-agent -server https://status.example.com -token tsa_…
 or via Docker (gives the agent access to the host's Docker daemon):
 
 ```bash
-docker run -d --restart unless-stopped \
+docker run -d --restart unless-stopped --name tsundere-agent \
   -e TSUNDERE_SERVER_URL=https://status.example.com \
   -e TSUNDERE_AGENT_TOKEN=tsa_… \
   -v /var/run/docker.sock:/var/run/docker.sock:ro \
-  ghcr.io/4g0nyy/tsundere-agent   # or build with Dockerfile.agent
+  ghcr.io/4g0nyy/tsundere-agent:latest
 ```
+
+Images for the agent and server are built automatically for amd64/arm64 on every push
+to `main` (see `.github/workflows/docker.yml`). The images contain nothing but the
+compiled binary — tokens and settings are passed in at runtime, so they're safe to
+keep public.
 
 The agent phones home every 30 seconds for its monitor list, so new/edited monitors are
 picked up automatically. If an agent stops reporting, its monitors are marked **down**
