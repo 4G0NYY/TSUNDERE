@@ -22,6 +22,7 @@ type Config struct {
 	ServerURL  string // e.g. https://status.example.com
 	Token      string // agent token from the admin UI
 	DockerHost string // unix socket path or tcp:// URL; empty disables docker checks
+	Hostname   string // overrides the reported hostname; empty falls back to os.Hostname()
 }
 
 type monitorDef struct {
@@ -55,7 +56,10 @@ type runner struct {
 }
 
 func New(cfg Config) *Agent {
-	hostname, _ := os.Hostname()
+	hostname := cfg.Hostname
+	if hostname == "" {
+		hostname, _ = os.Hostname()
+	}
 	a := &Agent{
 		cfg:      cfg,
 		client:   &http.Client{Timeout: 30 * time.Second},

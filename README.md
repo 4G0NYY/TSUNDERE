@@ -77,9 +77,15 @@ or via Docker (gives the agent access to the host's Docker daemon):
 docker run -d --restart unless-stopped --name tsundere-agent \
   -e TSUNDERE_SERVER_URL=https://status.example.com \
   -e TSUNDERE_AGENT_TOKEN=tsa_… \
+  -e TSUNDERE_HOSTNAME="$(hostname)" \
   -v /var/run/docker.sock:/var/run/docker.sock:ro \
   ghcr.io/4g0nyy/tsundere-agent:latest
 ```
+
+> **Hostname in Docker.** By default the agent reports its OS hostname, but inside a
+> container that's the container ID — not the host you actually care about. Set
+> `TSUNDERE_HOSTNAME` (e.g. to `$(hostname)`, evaluated on the host as above) to report a
+> sensible name. This is what the status page's "Display host name" option shows.
 
 Images for the agent and server are built automatically for amd64/arm64 on every push
 to `main` (see `.github/workflows/docker.yml`). The images contain nothing but the
@@ -114,6 +120,7 @@ lives in **Settings** in the admin UI, with test buttons for both alert channels
 | `-server` | `TSUNDERE_SERVER_URL` | — | server base URL |
 | `-token` | `TSUNDERE_AGENT_TOKEN` | — | agent token from the admin UI |
 | `-docker` | `TSUNDERE_DOCKER_HOST` | `/var/run/docker.sock` | docker socket path or `tcp://host:2375`; `off` disables docker checks |
+| `-hostname` | `TSUNDERE_HOSTNAME` | OS hostname | hostname reported to the server; set this in Docker, where the OS hostname is the container ID |
 
 ## Architecture
 

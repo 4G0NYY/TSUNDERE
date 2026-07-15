@@ -16,6 +16,7 @@ func main() {
 	serverURL := flag.String("server", os.Getenv("TSUNDERE_SERVER_URL"), "TSUNDERE server base URL, e.g. https://status.example.com")
 	token := flag.String("token", os.Getenv("TSUNDERE_AGENT_TOKEN"), "agent token (create one in the admin UI)")
 	dockerHost := flag.String("docker", envOr("TSUNDERE_DOCKER_HOST", "/var/run/docker.sock"), "docker socket path or tcp:// address; 'off' disables docker checks")
+	hostname := flag.String("hostname", os.Getenv("TSUNDERE_HOSTNAME"), "hostname reported to the server; defaults to the OS hostname (in Docker that's the container ID, so set this to the host's name)")
 	flag.Parse()
 
 	if *serverURL == "" || *token == "" {
@@ -31,6 +32,7 @@ func main() {
 		ServerURL:  strings.TrimRight(*serverURL, "/"),
 		Token:      *token,
 		DockerHost: dh,
+		Hostname:   strings.TrimSpace(*hostname),
 	})
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
