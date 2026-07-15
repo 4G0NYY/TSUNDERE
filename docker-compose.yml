@@ -1,0 +1,35 @@
+# TSUNDERE — server + a local agent on the same host.
+# Copy .env.example to .env and fill it in first.
+services:
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    restart: unless-stopped
+    ports:
+      - "8420:8420"
+    environment:
+      TSUNDERE_BASE_URL: ${TSUNDERE_BASE_URL:-http://localhost:8420}
+      TSUNDERE_GITHUB_CLIENT_ID: ${TSUNDERE_GITHUB_CLIENT_ID}
+      TSUNDERE_GITHUB_CLIENT_SECRET: ${TSUNDERE_GITHUB_CLIENT_SECRET}
+      TSUNDERE_ADMIN_USERS: ${TSUNDERE_ADMIN_USERS}
+    volumes:
+      - tsundere-data:/data
+
+  # Agent monitoring the docker host the server runs on. Create the agent in
+  # the admin UI first, then put its token into .env and start this service.
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    restart: unless-stopped
+    environment:
+      TSUNDERE_SERVER_URL: http://server:8420
+      TSUNDERE_AGENT_TOKEN: ${TSUNDERE_AGENT_TOKEN}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - server
+
+volumes:
+  tsundere-data:

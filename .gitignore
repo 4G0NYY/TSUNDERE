@@ -1,0 +1,7 @@
+*.db
+*.db-shm
+*.db-wal
+.env
+/tsundere-server
+/tsundere-agent
+*.exe
