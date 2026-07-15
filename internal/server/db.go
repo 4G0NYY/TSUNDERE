@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -49,6 +50,7 @@ CREATE TABLE IF NOT EXISTS settings (
 CREATE TABLE IF NOT EXISTS agents (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   name       TEXT NOT NULL,
+  hostname   TEXT NOT NULL DEFAULT '',
   token_hash TEXT NOT NULL UNIQUE,
   last_seen  INTEGER NOT NULL DEFAULT 0,
   inventory  TEXT NOT NULL DEFAULT '{}',
@@ -75,13 +77,15 @@ CREATE TABLE IF NOT EXISTS heartbeats (
   checked_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_heartbeats_monitor_time ON heartbeats(monitor_id, checked_at);
+CREATE INDEX IF NOT EXISTS idx_heartbeats_time ON heartbeats(checked_at);
 CREATE TABLE IF NOT EXISTS status_pages (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  slug        TEXT NOT NULL UNIQUE,
-  title       TEXT NOT NULL,
-  description TEXT NOT NULL DEFAULT '',
-  published   INTEGER NOT NULL DEFAULT 1,
-  created_at  INTEGER NOT NULL
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  slug           TEXT NOT NULL UNIQUE,
+  title          TEXT NOT NULL,
+  description    TEXT NOT NULL DEFAULT '',
+  published      INTEGER NOT NULL DEFAULT 1,
+  show_hostnames INTEGER NOT NULL DEFAULT 0,
+  created_at     INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS status_page_monitors (
   page_id    INTEGER NOT NULL REFERENCES status_pages(id) ON DELETE CASCADE,
@@ -112,6 +116,27 @@ CREATE TABLE IF NOT EXISTS maintenance_monitors (
   PRIMARY KEY (maintenance_id, monitor_id)
 );
 `)
+	if err != nil {
+		return err
+	}
+	// Additive migrations for databases created before these columns existed.
+	if err := s.ensureColumn("agents", "hostname", `hostname TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	return s.ensureColumn("status_pages", "show_hostnames", `show_hostnames INTEGER NOT NULL DEFAULT 0`)
+}
+
+// ensureColumn adds a column when it is missing; CREATE TABLE IF NOT EXISTS
+// alone never upgrades tables that already exist.
+func (s *Store) ensureColumn(table, column, ddl string) error {
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, table, column).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	_, err := s.db.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s`, table, ddl))
 	return err
 }
 
@@ -214,7 +239,7 @@ func (s *Store) RegenerateAgentToken(id int64) (string, error) {
 func scanAgent(row interface{ Scan(...any) error }) (Agent, error) {
 	var a Agent
 	var inv string
-	if err := row.Scan(&a.ID, &a.Name, &a.LastSeen, &inv, &a.CreatedAt); err != nil {
+	if err := row.Scan(&a.ID, &a.Name, &a.Hostname, &a.LastSeen, &inv, &a.CreatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return a, ErrNotFound
 		}
@@ -225,16 +250,18 @@ func scanAgent(row interface{ Scan(...any) error }) (Agent, error) {
 	return a, nil
 }
 
+const agentCols = `id, name, hostname, last_seen, inventory, created_at`
+
 func (s *Store) GetAgent(id int64) (Agent, error) {
-	return scanAgent(s.db.QueryRow(`SELECT id, name, last_seen, inventory, created_at FROM agents WHERE id = ?`, id))
+	return scanAgent(s.db.QueryRow(`SELECT `+agentCols+` FROM agents WHERE id = ?`, id))
 }
 
 func (s *Store) GetAgentByToken(token string) (Agent, error) {
-	return scanAgent(s.db.QueryRow(`SELECT id, name, last_seen, inventory, created_at FROM agents WHERE token_hash = ?`, hashToken(token)))
+	return scanAgent(s.db.QueryRow(`SELECT `+agentCols+` FROM agents WHERE token_hash = ?`, hashToken(token)))
 }
 
 func (s *Store) ListAgents() ([]Agent, error) {
-	rows, err := s.db.Query(`SELECT id, name, last_seen, inventory, created_at FROM agents ORDER BY name`)
+	rows, err := s.db.Query(`SELECT ` + agentCols + ` FROM agents ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -250,7 +277,13 @@ func (s *Store) ListAgents() ([]Agent, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) TouchAgent(id int64) error {
+// TouchAgent bumps last_seen and, when the agent reported one, its hostname —
+// one write either way, since this runs on every agent request.
+func (s *Store) TouchAgent(id int64, hostname string) error {
+	if hostname != "" {
+		_, err := s.db.Exec(`UPDATE agents SET last_seen = ?, hostname = ? WHERE id = ?`, now(), hostname, id)
+		return err
+	}
 	_, err := s.db.Exec(`UPDATE agents SET last_seen = ? WHERE id = ?`, now(), id)
 	return err
 }
@@ -332,8 +365,22 @@ func (s *Store) GetMonitor(id int64) (Monitor, error) {
 	return scanMonitor(s.db.QueryRow(`SELECT `+monitorCols+` FROM monitors WHERE id = ?`, id))
 }
 
+func scanMonitorWithAgent(rows *sql.Rows) (Monitor, error) {
+	var m Monitor
+	var cfg string
+	var enabled int
+	if err := rows.Scan(&m.ID, &m.AgentID, &m.Type, &m.Name, &cfg, &m.IntervalSec, &enabled, &m.LastStatus, &m.LastChange, &m.CreatedAt, &m.AgentName, &m.AgentHostname); err != nil {
+		return m, err
+	}
+	m.Config = json.RawMessage(cfg)
+	m.Enabled = enabled == 1
+	return m, nil
+}
+
+const monitorAgentCols = `m.id, m.agent_id, m.type, m.name, m.config, m.interval_sec, m.enabled, m.last_status, m.last_change, m.created_at, a.name, a.hostname`
+
 func (s *Store) ListMonitors() ([]Monitor, error) {
-	rows, err := s.db.Query(`SELECT m.id, m.agent_id, m.type, m.name, m.config, m.interval_sec, m.enabled, m.last_status, m.last_change, m.created_at, a.name
+	rows, err := s.db.Query(`SELECT ` + monitorAgentCols + `
 		FROM monitors m JOIN agents a ON a.id = m.agent_id ORDER BY m.name`)
 	if err != nil {
 		return nil, err
@@ -341,17 +388,48 @@ func (s *Store) ListMonitors() ([]Monitor, error) {
 	defer rows.Close()
 	out := []Monitor{}
 	for rows.Next() {
-		var m Monitor
-		var cfg string
-		var enabled int
-		if err := rows.Scan(&m.ID, &m.AgentID, &m.Type, &m.Name, &cfg, &m.IntervalSec, &enabled, &m.LastStatus, &m.LastChange, &m.CreatedAt, &m.AgentName); err != nil {
+		m, err := scanMonitorWithAgent(rows)
+		if err != nil {
 			return nil, err
 		}
-		m.Config = json.RawMessage(cfg)
-		m.Enabled = enabled == 1
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+// MonitorsByIDs returns the monitors (with agent name/hostname) keyed by id,
+// in a single query. Ids that no longer exist are simply absent.
+func (s *Store) MonitorsByIDs(ids []int64) (map[int64]Monitor, error) {
+	out := map[int64]Monitor{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := s.db.Query(`SELECT `+monitorAgentCols+`
+		FROM monitors m JOIN agents a ON a.id = m.agent_id WHERE m.id IN (`+placeholders(len(ids))+`)`, int64Args(ids)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		m, err := scanMonitorWithAgent(rows)
+		if err != nil {
+			return nil, err
+		}
+		out[m.ID] = m
+	}
+	return out, rows.Err()
+}
+
+func placeholders(n int) string {
+	return strings.TrimSuffix(strings.Repeat("?,", n), ",")
+}
+
+func int64Args(ids []int64) []any {
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	return args
 }
 
 func (s *Store) ListMonitorsForAgent(agentID int64) ([]Monitor, error) {
@@ -409,6 +487,57 @@ func (s *Store) HeartbeatsSince(monitorID int64, since int64) ([]Heartbeat, erro
 			return nil, err
 		}
 		out = append(out, hb)
+	}
+	return out, rows.Err()
+}
+
+// HeartbeatsForMonitorsSince returns heartbeats per monitor since the cutoff —
+// one query for a whole status page instead of one per monitor.
+func (s *Store) HeartbeatsForMonitorsSince(ids []int64, since int64) (map[int64][]Heartbeat, error) {
+	out := map[int64][]Heartbeat{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	args := append(int64Args(ids), since)
+	rows, err := s.db.Query(`SELECT id, monitor_id, status, latency_ms, message, checked_at FROM heartbeats
+		WHERE monitor_id IN (`+placeholders(len(ids))+`) AND checked_at >= ? ORDER BY checked_at`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var hb Heartbeat
+		if err := rows.Scan(&hb.ID, &hb.MonitorID, &hb.Status, &hb.LatencyMS, &hb.Message, &hb.CheckedAt); err != nil {
+			return nil, err
+		}
+		out[hb.MonitorID] = append(out[hb.MonitorID], hb)
+	}
+	return out, rows.Err()
+}
+
+// UptimesSince returns the up-ratio per monitor over the window in one query.
+// Monitors with no data in the window are absent from the map.
+func (s *Store) UptimesSince(ids []int64, since int64) (map[int64]float64, error) {
+	out := map[int64]float64{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	args := append(int64Args(ids), since)
+	rows, err := s.db.Query(`SELECT monitor_id, COUNT(*), SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END)
+		FROM heartbeats WHERE monitor_id IN (`+placeholders(len(ids))+`) AND checked_at >= ? AND status IN (0, 1)
+		GROUP BY monitor_id`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, total, up int64
+		if err := rows.Scan(&id, &total, &up); err != nil {
+			return nil, err
+		}
+		if total > 0 {
+			out[id] = float64(up) / float64(total)
+		}
 	}
 	return out, rows.Err()
 }
@@ -475,20 +604,25 @@ func (s *Store) pageMonitorIDs(pageID int64) ([]int64, error) {
 }
 
 func (s *Store) setPageMonitors(pageID int64, monitorIDs []int64) error {
-	if _, err := s.db.Exec(`DELETE FROM status_page_monitors WHERE page_id = ?`, pageID); err != nil {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM status_page_monitors WHERE page_id = ?`, pageID); err != nil {
 		return err
 	}
 	for i, mid := range monitorIDs {
-		if _, err := s.db.Exec(`INSERT OR IGNORE INTO status_page_monitors (page_id, monitor_id, sort) VALUES (?, ?, ?)`, pageID, mid, i); err != nil {
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO status_page_monitors (page_id, monitor_id, sort) VALUES (?, ?, ?)`, pageID, mid, i); err != nil {
 			return err
 		}
 	}
-	return nil
+	return tx.Commit()
 }
 
 func (s *Store) CreateStatusPage(p StatusPage) (StatusPage, error) {
-	res, err := s.db.Exec(`INSERT INTO status_pages (slug, title, description, published, created_at) VALUES (?, ?, ?, ?, ?)`,
-		p.Slug, p.Title, p.Description, boolInt(p.Published), now())
+	res, err := s.db.Exec(`INSERT INTO status_pages (slug, title, description, published, show_hostnames, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		p.Slug, p.Title, p.Description, boolInt(p.Published), boolInt(p.ShowHostnames), now())
 	if err != nil {
 		return StatusPage{}, err
 	}
@@ -500,8 +634,8 @@ func (s *Store) CreateStatusPage(p StatusPage) (StatusPage, error) {
 }
 
 func (s *Store) UpdateStatusPage(p StatusPage) error {
-	res, err := s.db.Exec(`UPDATE status_pages SET slug = ?, title = ?, description = ?, published = ? WHERE id = ?`,
-		p.Slug, p.Title, p.Description, boolInt(p.Published), p.ID)
+	res, err := s.db.Exec(`UPDATE status_pages SET slug = ?, title = ?, description = ?, published = ?, show_hostnames = ? WHERE id = ?`,
+		p.Slug, p.Title, p.Description, boolInt(p.Published), boolInt(p.ShowHostnames), p.ID)
 	if err != nil {
 		return err
 	}
@@ -511,44 +645,47 @@ func (s *Store) UpdateStatusPage(p StatusPage) error {
 	return s.setPageMonitors(p.ID, p.MonitorIDs)
 }
 
+const statusPageCols = `id, slug, title, description, published, show_hostnames, created_at`
+
 func (s *Store) scanStatusPage(row interface{ Scan(...any) error }) (StatusPage, error) {
 	var p StatusPage
-	var published int
-	if err := row.Scan(&p.ID, &p.Slug, &p.Title, &p.Description, &published, &p.CreatedAt); err != nil {
+	var published, showHost int
+	if err := row.Scan(&p.ID, &p.Slug, &p.Title, &p.Description, &published, &showHost, &p.CreatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return p, ErrNotFound
 		}
 		return p, err
 	}
 	p.Published = published == 1
+	p.ShowHostnames = showHost == 1
 	var err error
 	p.MonitorIDs, err = s.pageMonitorIDs(p.ID)
 	return p, err
 }
 
 func (s *Store) GetStatusPage(id int64) (StatusPage, error) {
-	return s.scanStatusPage(s.db.QueryRow(`SELECT id, slug, title, description, published, created_at FROM status_pages WHERE id = ?`, id))
+	return s.scanStatusPage(s.db.QueryRow(`SELECT `+statusPageCols+` FROM status_pages WHERE id = ?`, id))
 }
 
 func (s *Store) GetStatusPageBySlug(slug string) (StatusPage, error) {
-	return s.scanStatusPage(s.db.QueryRow(`SELECT id, slug, title, description, published, created_at FROM status_pages WHERE slug = ?`, slug))
+	return s.scanStatusPage(s.db.QueryRow(`SELECT `+statusPageCols+` FROM status_pages WHERE slug = ?`, slug))
 }
 
 func (s *Store) ListStatusPages() ([]StatusPage, error) {
-	rows, err := s.db.Query(`SELECT id, slug, title, description, published, created_at FROM status_pages ORDER BY title`)
+	rows, err := s.db.Query(`SELECT ` + statusPageCols + ` FROM status_pages ORDER BY title`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	// Collect first: scanStatusPage runs its own query, which would clash with an open rows cursor.
+	// Collect first: pageMonitorIDs runs its own query, which would clash with an open rows cursor.
 	type raw struct {
-		p         StatusPage
-		published int
+		p                   StatusPage
+		published, showHost int
 	}
 	raws := []raw{}
 	for rows.Next() {
 		var r raw
-		if err := rows.Scan(&r.p.ID, &r.p.Slug, &r.p.Title, &r.p.Description, &r.published, &r.p.CreatedAt); err != nil {
+		if err := rows.Scan(&r.p.ID, &r.p.Slug, &r.p.Title, &r.p.Description, &r.published, &r.showHost, &r.p.CreatedAt); err != nil {
 			return nil, err
 		}
 		raws = append(raws, r)
@@ -560,6 +697,7 @@ func (s *Store) ListStatusPages() ([]StatusPage, error) {
 	out := []StatusPage{}
 	for _, r := range raws {
 		r.p.Published = r.published == 1
+		r.p.ShowHostnames = r.showHost == 1
 		ids, err := s.pageMonitorIDs(r.p.ID)
 		if err != nil {
 			return nil, err
@@ -668,15 +806,20 @@ func (s *Store) maintenanceMonitorIDs(mid int64) ([]int64, error) {
 }
 
 func (s *Store) setMaintenanceMonitors(mid int64, monitorIDs []int64) error {
-	if _, err := s.db.Exec(`DELETE FROM maintenance_monitors WHERE maintenance_id = ?`, mid); err != nil {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM maintenance_monitors WHERE maintenance_id = ?`, mid); err != nil {
 		return err
 	}
 	for _, id := range monitorIDs {
-		if _, err := s.db.Exec(`INSERT OR IGNORE INTO maintenance_monitors (maintenance_id, monitor_id) VALUES (?, ?)`, mid, id); err != nil {
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO maintenance_monitors (maintenance_id, monitor_id) VALUES (?, ?)`, mid, id); err != nil {
 			return err
 		}
 	}
-	return nil
+	return tx.Commit()
 }
 
 func (s *Store) CreateMaintenance(m Maintenance) (Maintenance, error) {

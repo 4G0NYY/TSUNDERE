@@ -195,6 +195,7 @@ tr:hover td { background: rgba(255,255,255,.015); }
 }
 .svc:last-child { border-bottom: none; }
 .svc .name { font-weight: 600; flex: 1 1 160px; min-width: 0; }
+.svc .name .host { display: block; font-family: var(--mono); font-size: .72rem; font-weight: 400; color: var(--muted); }
 .svc .uptime { font-family: var(--mono); font-size: .85rem; color: var(--muted); width: 72px; text-align: right; }
 .svc .uptime.good { color: var(--up); }
 .svc .uptime.bad { color: var(--down); }

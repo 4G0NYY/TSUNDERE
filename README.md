@@ -23,7 +23,9 @@ chokes on many collection points or anything… b-baka.
 
 - **Status pages** like Uptime Kuma's: friendly name, 30-day uptime percentage, and green
   bars for the last 30 minutes. Create as many pages as you like, each with its own monitor
-  selection, at `/status/<slug>`.
+  selection, at `/status/<slug>`. A per-page "Display host name" option shows the agent's
+  hostname under each monitor — handy when several hosts run identically named containers
+  (e.g. a PG-HA cluster).
 - **Incidents** — publish/resolve incidents per status page (info/minor/major/critical).
 - **Maintenance windows** — schedule them, pick the affected monitors; their alerts are
   paused during the window and the window is announced on the status page.

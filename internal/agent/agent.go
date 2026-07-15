@@ -11,6 +11,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -39,9 +40,10 @@ type checkResult struct {
 }
 
 type Agent struct {
-	cfg    Config
-	client *http.Client
-	docker *checks.DockerClient
+	cfg      Config
+	client   *http.Client
+	docker   *checks.DockerClient
+	hostname string // OS hostname, reported to the server on every request
 
 	mu      sync.Mutex
 	runners map[int64]*runner
@@ -53,10 +55,12 @@ type runner struct {
 }
 
 func New(cfg Config) *Agent {
+	hostname, _ := os.Hostname()
 	a := &Agent{
-		cfg:     cfg,
-		client:  &http.Client{Timeout: 30 * time.Second},
-		runners: map[int64]*runner{},
+		cfg:      cfg,
+		client:   &http.Client{Timeout: 30 * time.Second},
+		hostname: hostname,
+		runners:  map[int64]*runner{},
 	}
 	if cfg.DockerHost != "" {
 		a.docker = checks.NewDockerClient(cfg.DockerHost)
@@ -227,6 +231,9 @@ func (a *Agent) apiPost(ctx context.Context, path string, body any, out any) err
 
 func (a *Agent) do(req *http.Request, out any) error {
 	req.Header.Set("Authorization", "Bearer "+a.cfg.Token)
+	if a.hostname != "" {
+		req.Header.Set("X-Tsundere-Hostname", a.hostname)
+	}
 	resp, err := a.client.Do(req)
 	if err != nil {
 		return err

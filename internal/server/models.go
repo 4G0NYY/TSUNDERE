@@ -21,6 +21,7 @@ const (
 type Agent struct {
 	ID        int64           `json:"id"`
 	Name      string          `json:"name"`
+	Hostname  string          `json:"hostname"`  // OS hostname self-reported by the agent
 	LastSeen  int64           `json:"last_seen"` // unix seconds, 0 = never
 	Inventory json.RawMessage `json:"inventory"`
 	CreatedAt int64           `json:"created_at"`
@@ -36,17 +37,18 @@ type DockerInventory struct {
 }
 
 type Monitor struct {
-	ID          int64           `json:"id"`
-	AgentID     int64           `json:"agent_id"`
-	AgentName   string          `json:"agent_name,omitempty"`
-	Type        string          `json:"type"`
-	Name        string          `json:"name"`
-	Config      json.RawMessage `json:"config"`
-	IntervalSec int             `json:"interval_sec"`
-	Enabled     bool            `json:"enabled"`
-	LastStatus  int             `json:"last_status"`
-	LastChange  int64           `json:"last_change"`
-	CreatedAt   int64           `json:"created_at"`
+	ID            int64           `json:"id"`
+	AgentID       int64           `json:"agent_id"`
+	AgentName     string          `json:"agent_name,omitempty"`
+	AgentHostname string          `json:"agent_hostname,omitempty"`
+	Type          string          `json:"type"`
+	Name          string          `json:"name"`
+	Config        json.RawMessage `json:"config"`
+	IntervalSec   int             `json:"interval_sec"`
+	Enabled       bool            `json:"enabled"`
+	LastStatus    int             `json:"last_status"`
+	LastChange    int64           `json:"last_change"`
+	CreatedAt     int64           `json:"created_at"`
 }
 
 type Heartbeat struct {
@@ -59,13 +61,14 @@ type Heartbeat struct {
 }
 
 type StatusPage struct {
-	ID          int64   `json:"id"`
-	Slug        string  `json:"slug"`
-	Title       string  `json:"title"`
-	Description string  `json:"description"`
-	Published   bool    `json:"published"`
-	CreatedAt   int64   `json:"created_at"`
-	MonitorIDs  []int64 `json:"monitor_ids"`
+	ID            int64   `json:"id"`
+	Slug          string  `json:"slug"`
+	Title         string  `json:"title"`
+	Description   string  `json:"description"`
+	Published     bool    `json:"published"`
+	ShowHostnames bool    `json:"show_hostnames"` // show the agent hostname under each monitor
+	CreatedAt     int64   `json:"created_at"`
+	MonitorIDs    []int64 `json:"monitor_ids"`
 }
 
 type Incident struct {

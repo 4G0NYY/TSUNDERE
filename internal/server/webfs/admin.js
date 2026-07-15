@@ -152,7 +152,7 @@ function monitorTable(monitors, withActions) {
       <td>${m.enabled ? (STATUS_BADGE[m.last_status] || "") : '<span class="badge pending">paused</span>'}</td>
       <td><b>${esc(m.name)}</b><br><span class="muted mono" style="font-size:.75rem">${esc(monitorTargetLabel(m))}</span></td>
       <td>${esc(m.type)}</td>
-      <td>${esc(m.agent_name || m.agent_id)}</td>
+      <td>${esc(m.agent_name || m.agent_id)}${m.agent_hostname ? `<br><span class="muted mono" style="font-size:.75rem">${esc(m.agent_hostname)}</span>` : ""}</td>
       <td>${m.interval_sec}s</td>
       ${withActions ? `<td style="text-align:right;white-space:nowrap">
         <button class="small" data-edit="${m.id}">edit</button>
@@ -310,6 +310,7 @@ async function viewAgents() {
     return `<tr>
       <td>${a.online ? '<span class="badge up">online</span>' : '<span class="badge down">offline</span>'}</td>
       <td><b>${esc(a.name)}</b></td>
+      <td class="muted mono" style="font-size:.8rem">${esc(a.hostname) || "–"}</td>
       <td class="muted">${fmtAgo(a.last_seen)}</td>
       <td class="muted">${nC || nS ? `${nC} containers · ${nS} services` : "–"}</td>
       <td style="text-align:right;white-space:nowrap">
@@ -325,7 +326,7 @@ async function viewAgents() {
       <button class="primary" id="new-agent">+ New agent</button>
     </div>
     <div class="card">
-      ${agents.length ? `<table><thead><tr><th>Status</th><th>Name</th><th>Last seen</th><th>Docker inventory</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+      ${agents.length ? `<table><thead><tr><th>Status</th><th>Name</th><th>Hostname</th><th>Last seen</th><th>Docker inventory</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
                       : '<p class="empty">No agents yet. Deploy one on each host you want monitored — I can\'t be everywhere at once, you know!</p>'}
     </div>`);
 
@@ -415,25 +416,36 @@ async function viewPages() {
     p = p || { published: true, monitor_ids: [] };
     const checks = monitors.map(m => `
       <div class="checkline"><input type="checkbox" class="pg-mon" value="${m.id}" ${p.monitor_ids.includes(m.id) ? "checked" : ""}>
-      <span>${esc(m.name)} <span class="muted">(${esc(m.type)})</span></span></div>`).join("");
+      <span>${esc(m.name)} <span class="muted">(${esc(m.type)}${m.agent_hostname ? " · " + esc(m.agent_hostname) : ""})</span></span></div>`).join("");
     modal(`
       <h2>${isNew ? "New status page" : "Edit status page"}</h2>
       <label>Title</label><input id="pg-title" value="${esc(p.title || "")}" placeholder="My Services">
       <label>Slug (URL: /status/&lt;slug&gt;)</label><input id="pg-slug" value="${esc(p.slug || "")}" placeholder="main">
       <label>Description (optional)</label><textarea id="pg-desc" rows="2">${esc(p.description || "")}</textarea>
-      <label>Monitors shown on this page</label>
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <label style="margin-bottom:0">Monitors shown on this page</label>
+        ${monitors.length ? '<button class="small" id="pg-all" type="button" style="margin-top:12px">display all</button>' : ""}
+      </div>
       ${checks || '<p class="muted">No monitors exist yet.</p>'}
+      <div class="checkline"><input type="checkbox" id="pg-hosts" ${p.show_hostnames ? "checked" : ""}><span>Display host name (agent hostname under each monitor)</span></div>
       <div class="checkline"><input type="checkbox" id="pg-pub" ${p.published ? "checked" : ""}><span>Published (publicly visible)</span></div>
       <div class="actions">
         <button onclick="closeModal()">Cancel</button>
         <button class="primary" id="pg-save">${isNew ? "Create" : "Save"}</button>
       </div>`);
+    // "display all" checks every monitor; if everything is checked already, it clears instead.
+    document.getElementById("pg-all")?.addEventListener("click", () => {
+      const boxes = [...document.querySelectorAll(".pg-mon")];
+      const allChecked = boxes.every(b => b.checked);
+      boxes.forEach(b => b.checked = !allChecked);
+    });
     document.getElementById("pg-save").addEventListener("click", async () => {
       const body = {
         title: document.getElementById("pg-title").value,
         slug: document.getElementById("pg-slug").value,
         description: document.getElementById("pg-desc").value,
         published: document.getElementById("pg-pub").checked,
+        show_hostnames: document.getElementById("pg-hosts").checked,
         monitor_ids: [...document.querySelectorAll(".pg-mon:checked")].map(c => +c.value),
       };
       try {
@@ -559,7 +571,7 @@ async function viewMaintenance() {
     m = m || { start_at: Math.floor(nowS + 3600), end_at: Math.floor(nowS + 7200), monitor_ids: [] };
     const checks = monitors.map(mon => `
       <div class="checkline"><input type="checkbox" class="mt-mon" value="${mon.id}" ${m.monitor_ids.includes(mon.id) ? "checked" : ""}>
-      <span>${esc(mon.name)} <span class="muted">(${esc(mon.type)})</span></span></div>`).join("");
+      <span>${esc(mon.name)} <span class="muted">(${esc(mon.type)}${mon.agent_hostname ? " · " + esc(mon.agent_hostname) : ""})</span></span></div>`).join("");
     modal(`
       <h2>${isNew ? "Schedule maintenance" : "Edit maintenance"}</h2>
       <label>Title</label><input id="mt-title" value="${esc(m.title || "")}" placeholder="Kernel upgrade on vps-1">

@@ -18,12 +18,9 @@ func NewEngine(store *Store, notifier *Notifier) *Engine {
 }
 
 // ProcessResult ingests one check result from an agent (or a synthetic one
-// from the stale detector).
-func (e *Engine) ProcessResult(res CheckResult) {
-	m, err := e.store.GetMonitor(res.MonitorID)
-	if err != nil {
-		return // monitor was deleted while the agent still had it scheduled
-	}
+// from the stale detector). Callers pass the already-loaded monitor so it is
+// not fetched twice per result.
+func (e *Engine) ProcessResult(m Monitor, res CheckResult) {
 	if res.CheckedAt == 0 {
 		res.CheckedAt = time.Now().Unix()
 	}
@@ -82,7 +79,7 @@ func (e *Engine) staleLoop() {
 			continue
 		}
 		for _, m := range stale {
-			e.ProcessResult(CheckResult{
+			e.ProcessResult(m, CheckResult{
 				MonitorID: m.ID,
 				Status:    StatusDown,
 				Message:   "no data received from agent (agent offline?)",

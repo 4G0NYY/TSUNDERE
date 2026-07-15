@@ -82,7 +82,7 @@ function render(d) {
     html += `
       <div class="svc">
         <span class="dot ${STATUS_DOT[m.status] || "pending"}" title="${STATUS_LABEL[m.status] || ""}"></span>
-        <span class="name">${esc(m.name)}</span>
+        <span class="name">${esc(m.name)}${m.hostname ? `<small class="host">${esc(m.hostname)}</small>` : ""}</span>
         ${barsHTML(m.bars)}
         ${uptimeCell(m.uptime_30d)}
       </div>`;

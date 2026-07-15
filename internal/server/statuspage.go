@@ -20,7 +20,8 @@ type publicBar struct {
 type publicMonitor struct {
 	ID        int64       `json:"id"`
 	Name      string      `json:"name"`
-	Status    int         `json:"status"` // includes StatusMaintenance
+	Hostname  string      `json:"hostname,omitempty"` // only set when the page has show_hostnames on
+	Status    int         `json:"status"`             // includes StatusMaintenance
 	Uptime30d any         `json:"uptime_30d"`
 	Bars      []publicBar `json:"bars"`
 }
@@ -78,18 +79,30 @@ func (s *Server) handlePublicStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Three batched queries for the whole page instead of three per monitor.
+	monMap, err := s.store.MonitorsByIDs(page.MonitorIDs)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	beatsMap, err := s.store.HeartbeatsForMonitorsSince(page.MonitorIDs, windowStart)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	uptimes, err := s.store.UptimesSince(page.MonitorIDs, nowTS-30*24*3600)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
 	monitors := []publicMonitor{}
 	overall := "up"
 	anyDown, anyMaint := false, false
 	for _, id := range page.MonitorIDs {
-		m, err := s.store.GetMonitor(id)
-		if err != nil {
+		m, ok := monMap[id]
+		if !ok {
 			continue // monitor deleted but still referenced
-		}
-		beats, err := s.store.HeartbeatsSince(id, windowStart)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, err.Error())
-			return
 		}
 
 		// Bucket heartbeats into 1-minute bars; any down beat taints the bucket.
@@ -97,7 +110,7 @@ func (s *Server) handlePublicStatus(w http.ResponseWriter, r *http.Request) {
 		for i := range bars {
 			bars[i] = publicBar{Status: barNoData, TS: windowStart + int64(i*bucketSec)}
 		}
-		for _, hb := range beats {
+		for _, hb := range beatsMap[id] {
 			idx := int((hb.CheckedAt - windowStart) / bucketSec)
 			if idx < 0 || idx >= barCount {
 				continue
@@ -109,7 +122,7 @@ func (s *Server) handlePublicStatus(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		uptime, hasUptime, _ := s.store.Uptime(id, nowTS-30*24*3600)
+		uptime, hasUptime := uptimes[id]
 		status := m.LastStatus
 		if monitorInMaint[id] {
 			status = StatusMaintenance
@@ -117,11 +130,15 @@ func (s *Server) handlePublicStatus(w http.ResponseWriter, r *http.Request) {
 		} else if status == StatusDown {
 			anyDown = true
 		}
-		monitors = append(monitors, publicMonitor{
+		pm := publicMonitor{
 			ID: m.ID, Name: m.Name, Status: status,
 			Uptime30d: uptimeOrNil(uptime, hasUptime),
 			Bars:      bars,
-		})
+		}
+		if page.ShowHostnames {
+			pm.Hostname = m.AgentHostname
+		}
+		monitors = append(monitors, pm)
 	}
 	if anyDown {
 		overall = "down"

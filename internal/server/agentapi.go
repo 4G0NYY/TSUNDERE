@@ -19,7 +19,7 @@ func (s *Server) agentAuth(w http.ResponseWriter, r *http.Request) (Agent, bool)
 		writeErr(w, http.StatusUnauthorized, "invalid agent token")
 		return Agent{}, false
 	}
-	s.store.TouchAgent(agent.ID)
+	s.store.TouchAgent(agent.ID, strings.TrimSpace(r.Header.Get("X-Tsundere-Hostname")))
 	return agent, true
 }
 
@@ -57,11 +57,12 @@ func (s *Server) handleAgentResults(w http.ResponseWriter, r *http.Request) {
 	accepted := 0
 	for _, res := range body.Results {
 		// Only accept results for monitors that actually belong to this agent.
+		// (Also covers monitors deleted while the agent still had them scheduled.)
 		m, err := s.store.GetMonitor(res.MonitorID)
 		if err != nil || m.AgentID != agent.ID {
 			continue
 		}
-		s.engine.ProcessResult(res)
+		s.engine.ProcessResult(m, res)
 		accepted++
 	}
 	writeJSON(w, map[string]any{"accepted": accepted})
