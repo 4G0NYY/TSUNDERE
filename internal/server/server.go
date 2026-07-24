@@ -81,6 +81,19 @@ func (s *Server) Run() error {
 	// Public status page API
 	mux.HandleFunc("GET /api/status/{slug}", s.handlePublicStatus)
 
+	// Read-only public API (v1) for external dashboards — API-key auth + CORS.
+	// Patterns are registered without a method so the CORS wrapper can answer
+	// preflight OPTIONS and reject any non-GET verb itself.
+	v1 := func(pattern string, h http.HandlerFunc) {
+		mux.HandleFunc(pattern, s.requireAPIKey(h))
+	}
+	v1("/api/v1/status", s.handleV1Status)
+	v1("/api/v1/nodes", s.handleV1Nodes)
+	v1("/api/v1/monitors", s.handleV1Monitors)
+	v1("/api/v1/monitors/{id}/heartbeats", s.handleV1Heartbeats)
+	v1("/api/v1/metrics", s.handleV1Metrics)
+	v1("/api/v1/logs", s.handleV1Logs)
+
 	// Admin API (session auth)
 	admin := func(pattern string, h http.HandlerFunc) {
 		mux.HandleFunc(pattern, s.requireAdmin(h))
@@ -115,6 +128,10 @@ func (s *Server) Run() error {
 	admin("POST /api/admin/maintenances", s.handleCreateMaintenance)
 	admin("PUT /api/admin/maintenances/{id}", s.handleUpdateMaintenance)
 	admin("DELETE /api/admin/maintenances/{id}", s.handleDeleteMaintenance)
+
+	admin("GET /api/admin/api-keys", s.handleListAPIKeys)
+	admin("POST /api/admin/api-keys", s.handleCreateAPIKey)
+	admin("DELETE /api/admin/api-keys/{id}", s.handleDeleteAPIKey)
 
 	admin("GET /api/admin/settings", s.handleGetSettings)
 	admin("PUT /api/admin/settings", s.handlePutSettings)

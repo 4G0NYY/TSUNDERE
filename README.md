@@ -34,6 +34,9 @@ chokes on many collection points or anything… b-baka.
   a docker monitor is: pick agent → pick container/service from a dropdown → give it a
   friendly name. Done.
 - **Admin auth via GitHub OAuth**, allow-listed by GitHub username.
+- **Read-only API** at `/api/v1` for external dashboards (e.g. the
+  [TSUNDERE Portal](../dashboard)), gated by API keys you mint in the admin UI.
+  It's strictly GET-only — see [`docs/API.md`](docs/API.md).
 - Everything except OAuth is configured in the admin web UI.
 
 ## Quick start

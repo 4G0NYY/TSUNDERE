@@ -111,3 +111,29 @@ type CheckResult struct {
 	Message   string  `json:"message"`
 	CheckedAt int64   `json:"checked_at"` // optional; server fills if 0
 }
+
+// APIKey authenticates read-only access to the public /api/v1 endpoints
+// consumed by external dashboards (e.g. the TSUNDERE Portal). Only the hash is
+// ever stored; the plaintext key is shown exactly once, at creation time — just
+// like agent tokens. It's not like we'd hand it out twice, baka.
+type APIKey struct {
+	ID        int64  `json:"id"`
+	Name      string `json:"name"`
+	Prefix    string `json:"prefix"`    // leading chars of the key, safe to display
+	LastUsed  int64  `json:"last_used"` // unix seconds, 0 = never used
+	CreatedAt int64  `json:"created_at"`
+}
+
+// EventLog is a heartbeat joined with its monitor/agent identity, shaped for the
+// read-only event-feed endpoint.
+type EventLog struct {
+	MonitorID     int64   `json:"monitor_id"`
+	MonitorName   string  `json:"monitor_name"`
+	Type          string  `json:"type"`
+	AgentName     string  `json:"agent_name"`
+	AgentHostname string  `json:"agent_hostname"`
+	Status        int     `json:"status"`
+	LatencyMS     float64 `json:"latency_ms"`
+	Message       string  `json:"message"`
+	CheckedAt     int64   `json:"checked_at"`
+}

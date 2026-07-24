@@ -71,6 +71,7 @@ const ROUTES = {
   pages:       { label: "Status pages", render: viewPages },
   incidents:   { label: "Incidents",    render: viewIncidents },
   maintenance: { label: "Maintenance",  render: viewMaintenance },
+  apikeys:     { label: "API keys",     render: viewApiKeys },
   settings:    { label: "Settings",     render: viewSettings },
 };
 
@@ -607,6 +608,79 @@ async function viewMaintenance() {
     if (!confirm("Delete this maintenance window?")) return;
     try { await api("/api/admin/maintenances/" + b.dataset.del, { method: "DELETE" }); route(); } catch (e) { oops(e); }
   }));
+}
+
+// ---------- api keys ----------
+
+async function viewApiKeys() {
+  const keys = await api("/api/admin/api-keys");
+  const rows = keys.map(k => `<tr>
+    <td><b>${esc(k.name)}</b></td>
+    <td class="muted mono" style="font-size:.82rem">${esc(k.prefix)}…</td>
+    <td class="muted">${fmtTime(k.created_at)}</td>
+    <td class="muted">${k.last_used ? fmtAgo(k.last_used) : "never"}</td>
+    <td style="text-align:right"><button class="small danger" data-del="${k.id}">revoke</button></td>
+  </tr>`).join("");
+
+  const main = shell("apikeys", `
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <h1>API keys</h1>
+      <button class="primary" id="new-key">+ New API key</button>
+    </div>
+    <p class="muted">Keys grant <b>read-only</b> access to the <span class="mono">/api/v1</span> endpoints
+      (status, nodes, monitors, metrics, heartbeats, logs) — handy for external dashboards like the
+      TSUNDERE Portal. They can't change a single thing, so relax.</p>
+    <div class="card">
+      ${keys.length ? `<table><thead><tr><th>Name</th><th>Key</th><th>Created</th><th>Last used</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+                    : '<p class="empty">No API keys yet. Make one if you want something else to read my telemetry.</p>'}
+    </div>
+    <div class="card">
+      <h2>Using a key</h2>
+      <p class="muted" style="font-size:.85rem">Send it on every request, either way:</p>
+      <div class="token-box" style="border-style:solid">curl -H "X-API-Key: tsk_…" ${location.origin}/api/v1/status</div>
+    </div>`);
+
+  main.querySelector("#new-key").addEventListener("click", () => {
+    modal(`
+      <h2>New API key</h2>
+      <label>Friendly name (e.g. where it's used)</label>
+      <input id="ak-name" placeholder="TSUNDERE Portal dashboard">
+      <div class="actions">
+        <button onclick="closeModal()">Cancel</button>
+        <button class="primary" id="ak-create">Create</button>
+      </div>`);
+    document.getElementById("ak-create").addEventListener("click", async () => {
+      const name = document.getElementById("ak-name").value.trim();
+      if (!name) return toast("It needs a name!", true);
+      try {
+        const res = await api("/api/admin/api-keys", { method: "POST", body: { name } });
+        showApiKey(res.api_key.name, res.key);
+      } catch (e) { oops(e); }
+    });
+  });
+
+  main.querySelectorAll("[data-del]").forEach(b => b.addEventListener("click", async () => {
+    const k = keys.find(x => x.id == b.dataset.del);
+    if (!confirm(`Revoke API key "${k.name}"? Anything using it stops working immediately.`)) return;
+    try { await api("/api/admin/api-keys/" + k.id, { method: "DELETE" }); toast("Revoked."); route(); }
+    catch (e) { oops(e); }
+  }));
+}
+
+function showApiKey(name, key) {
+  modal(`
+    <h2>API key "${esc(name)}"</h2>
+    <p>Copy this <b>now</b> — it is shown exactly once. I-it's not like I'll remember it for you!</p>
+    <div class="token-box" id="ak-tok">${esc(key)}</div>
+    <p class="muted" style="font-size:.82rem">Paste it into the dashboard, or send it as
+      <span class="mono">X-API-Key</span> / <span class="mono">Authorization: Bearer</span>.</p>
+    <div class="actions">
+      <button id="ak-copy">Copy key</button>
+      <button class="primary" onclick="closeModal();route()">Done</button>
+    </div>`);
+  document.getElementById("ak-copy").addEventListener("click", () => {
+    navigator.clipboard.writeText(key).then(() => toast("Copied. Don't lose it."));
+  });
 }
 
 // ---------- settings ----------

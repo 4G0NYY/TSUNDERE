@@ -115,6 +115,14 @@ CREATE TABLE IF NOT EXISTS maintenance_monitors (
   monitor_id     INTEGER NOT NULL REFERENCES monitors(id) ON DELETE CASCADE,
   PRIMARY KEY (maintenance_id, monitor_id)
 );
+CREATE TABLE IF NOT EXISTS api_keys (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT NOT NULL,
+  prefix     TEXT NOT NULL DEFAULT '',
+  key_hash   TEXT NOT NULL UNIQUE,
+  last_used  INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
 `)
 	if err != nil {
 		return err
